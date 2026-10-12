@@ -178,21 +178,15 @@ b(600,713, 878,713)
 b(923,713, 1200,713)
 b(1200,713, 1200,363)
 
+# Узловые точки только в местах подключения приборов к общей цепи
+# Всего 6 точек: 3 ветви вольтметров + точки подключения на основной магистрали
 JUNCTION_DOTS = [
-    (600+DX, 363+DY),    # после амперметра к R1
-    (900+DX, 363+DY),    # между R1 и R2
-    (1150+DX, 363+DY),   # правый вывод R2 -> магистраль
-    (1190+DX, 363+DY),   # на горизонтальном проводе перед поворотом
-    (1200+DX, 380+DY),   # на вертикальном проводе сразу после поворота
-]
-
-BRANCH_JUNCTIONS = [
-    (600+DX, 500+DY),   # ветвь PV1
-    (900+DX, 500+DY),
-    (900+DX, 588+DY),   # ветвь PV2
-    (1200+DX, 588+DY),
-    (600+DX, 713+DY),   # ветвь PV3
-    (1200+DX, 713+DY),
+    (600+DX, 500+DY),   # T1: подключение PV1 к ветви (выход из ветви на магистраль/ответвление)
+    (900+DX, 500+DY),   # T2: подключение PV1 (второй вывод)
+    (900+DX, 588+DY),   # T3: подключение PV2
+    (1200+DX, 588+DY),  # T4: подключение PV2
+    (600+DX, 713+DY),   # T5: подключение PV3
+    (1200+DX, 713+DY),  # T6: подключение PV3
 ]
 
 ALL_WIRE_STEPS = SW + BW
@@ -504,7 +498,7 @@ class ResistorCartoon:
         p["step3"].append(self.canvas.create_line(bx, by2, bx, by, fill=C_WIRE_SERIES, width=3, tags="e1_wire"))
 
         p["step4"] = []
-        for jx, jy in JUNCTION_DOTS + BRANCH_JUNCTIONS:
+        for jx, jy in JUNCTION_DOTS:
             p["step4"].append(self.junction_dot(jx, jy, "junc"))
 
         self.wire_items = []
@@ -1202,7 +1196,7 @@ class ResistorCartoon:
         self._junction_hl_items = []
         if not visible:
             return
-        for jx, jy in JUNCTION_DOTS + BRANCH_JUNCTIONS:
+        for jx, jy in JUNCTION_DOTS:
             dot = self.canvas.create_oval(
                 jx-8, jy-8, jx+8, jy+8,
                 fill="#212121", outline="", tags="hl_junc"
