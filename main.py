@@ -144,6 +144,29 @@ E1_X = 325+DX; E1_Y1 = 450+DY; E1_Y2 = 688+DY
 PV1_CENTER   = (750+DX, 500+DY)
 PV2_CENTER   = (1050+DX, 588+DY)
 PV3_CENTER   = (900+DX, 713+DY)
+
+METER_W        = 92
+METER_H        = 76
+METER_PIVOT_DY = 26
+METER_RARC     = 40
+METER_NEEDLE_LEN  = 36
+METER_NEEDLE_TAIL = 7
+METER_ANG0     = -150.0
+METER_ANG1     = -30.0
+
+
+def _meter_angle(kind, v):
+    if kind == "A":
+        vmin, vmax = 0.0, 120.0
+    else:
+        vmin, vmax = 0.0, 15.0
+    if v < vmin:
+        v = vmin
+    elif v > vmax:
+        v = vmax
+    return METER_ANG0 + (v - vmin) / (vmax - vmin) * (METER_ANG1 - METER_ANG0)
+
+
 PANEL_Y1=65; PANEL_Y2=925
 
 MEDIA_DIR = resource_path("media")
@@ -411,60 +434,69 @@ class ResistorCartoon:
         t = (tag, specific_tag) if specific_tag else tag
         import math
         import numpy as np
-        r = 36
-        # Корпус прибора
-        items.append(self.canvas.create_oval(
-            cx-r-2, cy-r-2, cx+r+2, cy+r+2,
-            fill="#F5F5F5", outline=C_METER_BORDER, width=2, tags=t
+        w2 = METER_W / 2.0
+        h2 = METER_H / 2.0
+        # Корпус прибора: прямоугольный лаб. прибор со скруглёнными углами
+        items.append(self.canvas.create_rectangle(
+            cx-w2, cy-h2, cx+w2, cy+h2,
+            fill="#E8E8E8", outline=C_METER_BORDER, width=2, tags=t
         ))
-        items.append(self.canvas.create_oval(
-            cx-r+2, cy-r+2, cx+r-2, cy+r-2,
+        items.append(self.canvas.create_rectangle(
+            cx-w2+3, cy-h2+3, cx+w2-3, cy+h2-3,
             fill="#FAFAFA", outline="#9E9E9E", width=1, tags=t
         ))
-        # Шкала
+        # Заголовок с обозначением прибора
+        items.append(self.canvas.create_text(
+            cx, cy-h2+12, text="%s  \u00b7  %s" % (label, kind),
+            font=("Arial", self._sf(10), "bold"), fill=C_TEXT,
+            anchor="center", tags=t
+        ))
+        # Шкала (дуга над осью вращения стрелки)
+        px, py = cx, cy + METER_PIVOT_DY
         if kind == "A":
-            vmin, vmax, step_major, step_minor, ang0, ang1 = 0, 120, 20, 10, -130, 130
+            vmin, vmax, step_major, step_minor = 0, 120, 20, 10
         else:
-            vmin, vmax, step_major, step_minor, ang0, ang1 = 0, 15, 3, 1.5, -130, 130
+            vmin, vmax, step_major, step_minor = 0, 15, 3, 1.5
         span = vmax - vmin if vmax > vmin else 1
+        a0, a1 = METER_ANG0, METER_ANG1
         for val in np.arange(vmin, vmax + 1e-6, step_minor):
-            a = ang0 + (val - vmin) / span * (ang1 - ang0)
+            a = a0 + (val - vmin) / span * (a1 - a0)
             rad = math.radians(a)
             is_major = abs(val % step_major) < 1e-4 or abs(val - vmax) < 1e-4
             if is_major:
-                r1s, r2s, w = r-6, r-14, 2
-                tx = cx + (r-20) * math.cos(rad)
-                ty = cy + (r-20) * math.sin(rad)
-                items.append(self.canvas.create_text(
-                    tx, ty, text=f"{int(val) if abs(val-int(val))<1e-3 else val:g}",
-                    font=("Arial", self._sf(8), "bold"), fill=C_TEXT, tags=t
-                ))
+                r1s, r2s, wdt = METER_RARC, METER_RARC-9, 2
             else:
-                r1s, r2s, w = r-6, r-10, 1
+                r1s, r2s, wdt = METER_RARC, METER_RARC-5, 1
             items.append(self.canvas.create_line(
-                cx + r1s*math.cos(rad), cy + r1s*math.sin(rad),
-                cx + r2s*math.cos(rad), cy + r2s*math.sin(rad),
-                fill="#424242", width=w, tags=t
+                px + r1s*math.cos(rad), py + r1s*math.sin(rad),
+                px + r2s*math.cos(rad), py + r2s*math.sin(rad),
+                fill="#424242", width=wdt, tags=t
             ))
-        items.append(self.canvas.create_text(
-            cx, cy - r + 14, text=kind,
-            font=("Arial", self._sf(14), "bold"), fill=C_TEXT, anchor="center", tags=t
-        ))
+            if is_major:
+                tr = METER_RARC - 17
+                tx = px + tr * math.cos(rad)
+                ty = py + tr * math.sin(rad)
+                txt = "%d" % int(val) if abs(val - int(val)) < 1e-3 else "%g" % val
+                items.append(self.canvas.create_text(
+                    tx, ty, text=txt,
+                    font=("Arial", self._sf(8), "bold"), fill=C_TEXT,
+                    anchor="center", tags=t
+                ))
+        # Стрелка (в исходном положении — на нуле шкалы)
+        za = math.radians(METER_ANG0)
         needle = self.canvas.create_line(
-            cx, cy, cx + (r-18), cy,
-            fill="#D32F2F", width=4, arrow="last", arrowshape=(10,12,3), tags=t
+            px - METER_NEEDLE_TAIL*math.cos(za), py - METER_NEEDLE_TAIL*math.sin(za),
+            px + METER_NEEDLE_LEN*math.cos(za), py + METER_NEEDLE_LEN*math.sin(za),
+            fill="#D32F2F", width=3, tags=t
         )
-        pivot = self.canvas.create_oval(cx-4, cy-4, cx+4, cy+4, fill="#212121", outline="", tags=t)
         items.append(needle)
-        items.append(pivot)
-        dy = 0
-        items.append(self.canvas.create_text(
-            cx, cy + r + 16, text=label,
-            font=("Arial", self._sf(11), "bold"), fill=C_TEXT, anchor="n", tags=t
+        items.append(self.canvas.create_oval(
+            px-4, py-4, px+4, py+4, fill="#212121", outline="", tags=t
         ))
+        # Цифровое показание под корпусом
         val_tags = (tag, specific_tag + "_val") if specific_tag else tag
         val = self.canvas.create_text(
-            cx, cy + r + 34, text="",
+            cx, cy + h2 + 6, text="",
             font=("Consolas", self._sf(11)), fill="#D32F2F", anchor="n", tags=val_tags
         )
         items.append(val)
@@ -944,28 +976,22 @@ class ResistorCartoon:
         self.canvas.itemconfig(self.pv3_val, text="%.1f В" % (u1+u2))
         if hasattr(self, "r2_label"):
             self.canvas.itemconfig(self.r2_label, text="R2 = %d \u03a9" % r2)
-        def ang(kind, v):
-            if kind == "A":
-                vmin, vmax, a0, a1 = 0, 120, -130, 130
-            else:
-                vmin, vmax, a0, a1 = 0, 15, -130, 130
-            vv = max(vmin, min(vmax, v))
-            span = vmax - vmin if vmax > vmin else 1
-            return a0 + (vv - vmin) / span * (a1 - a0)
-        r_m = 36
-        cx_a, cy_a = PA1_CENTER
-        if getattr(self, 'pa1_needle', None) is not None:
-            a = math.radians(ang("A", i_ma))
-            self.canvas.coords(self.pa1_needle, cx_a, cy_a, cx_a + (r_m-18)*math.cos(a), cy_a + (r_m-18)*math.sin(a))
-        for needle, center, v in [
-            (getattr(self, 'pv1_needle', None), PV1_CENTER, u1),
-            (getattr(self, 'pv2_needle', None), PV2_CENTER, u2),
-            (getattr(self, 'pv3_needle', None), PV3_CENTER, u1+u2),
+        for needle, center, kind, v in [
+            (getattr(self, 'pa1_needle', None), PA1_CENTER, "A", i_ma),
+            (getattr(self, 'pv1_needle', None), PV1_CENTER, "V", u1),
+            (getattr(self, 'pv2_needle', None), PV2_CENTER, "V", u2),
+            (getattr(self, 'pv3_needle', None), PV3_CENTER, "V", u1+u2),
         ]:
-            if needle is not None:
-                x,y = center
-                a2 = math.radians(ang("V", v))
-                self.canvas.coords(needle, x,y, x + (r_m-18)*math.cos(a2), y + (r_m-18)*math.sin(a2))
+            if needle is None:
+                continue
+            a = math.radians(_meter_angle(kind, v))
+            px = center[0]
+            py = center[1] + METER_PIVOT_DY
+            bx = px - METER_NEEDLE_TAIL * math.cos(a)
+            by = py - METER_NEEDLE_TAIL * math.sin(a)
+            tx = px + METER_NEEDLE_LEN * math.cos(a)
+            ty = py + METER_NEEDLE_LEN * math.sin(a)
+            self.canvas.coords(needle, bx, by, tx, ty)
 
     PHASES = [
         ("step0",       "Шаг 1 из 9","Приветствие"),
