@@ -261,6 +261,10 @@ class ResistorCartoon:
 
         self.tts = TTSManager()
         self._speech_delay_id = None
+        self.pa1_needle = None
+        self.pv1_needle = None
+        self.pv2_needle = None
+        self.pv3_needle = None
 
         # Video playback state
         self._video_cap = None
@@ -405,32 +409,73 @@ class ResistorCartoon:
     def draw_meter(self, cx, cy, kind, label, tag, specific_tag=None):
         items = []
         t = (tag, specific_tag) if specific_tag else tag
-        img_key = "ampermetr" if kind == "A" else "voltmeter"
-        img = self.photo_imgs.get(img_key)
-        if img:
-            items.append(self.canvas.create_image(cx, cy, image=img, anchor="center", tags=t))
-            dy = 55
+        import math
+        import numpy as np
+        r = 36
+        # Корпус прибора
+        items.append(self.canvas.create_oval(
+            cx-r-2, cy-r-2, cx+r+2, cy+r+2,
+            fill="#F5F5F5", outline=C_METER_BORDER, width=2, tags=t
+        ))
+        items.append(self.canvas.create_oval(
+            cx-r+2, cy-r+2, cx+r-2, cy+r-2,
+            fill="#FAFAFA", outline="#9E9E9E", width=1, tags=t
+        ))
+        # Шкала
+        if kind == "A":
+            vmin, vmax, step_major, step_minor, ang0, ang1 = 0, 120, 20, 10, -130, 130
         else:
-            r = 18
-            items.append(self.canvas.create_oval(
-                cx-r, cy-r, cx+r, cy+r,
-                fill=C_METER_BG, outline=C_METER_BORDER, width=2, tags=t
+            vmin, vmax, step_major, step_minor, ang0, ang1 = 0, 15, 3, 1.5, -130, 130
+        span = vmax - vmin if vmax > vmin else 1
+        for val in np.arange(vmin, vmax + 1e-6, step_minor):
+            a = ang0 + (val - vmin) / span * (ang1 - ang0)
+            rad = math.radians(a)
+            is_major = abs(val % step_major) < 1e-4 or abs(val - vmax) < 1e-4
+            if is_major:
+                r1s, r2s, w = r-6, r-14, 2
+                tx = cx + (r-20) * math.cos(rad)
+                ty = cy + (r-20) * math.sin(rad)
+                items.append(self.canvas.create_text(
+                    tx, ty, text=f"{int(val) if abs(val-int(val))<1e-3 else val:g}",
+                    font=("Arial", self._sf(8), "bold"), fill=C_TEXT, tags=t
+                ))
+            else:
+                r1s, r2s, w = r-6, r-10, 1
+            items.append(self.canvas.create_line(
+                cx + r1s*math.cos(rad), cy + r1s*math.sin(rad),
+                cx + r2s*math.cos(rad), cy + r2s*math.sin(rad),
+                fill="#424242", width=w, tags=t
             ))
-            items.append(self.canvas.create_text(
-                cx, cy, text=kind, font=("Arial", self._sf(16), "bold"),
-                fill=C_TEXT, anchor="center", tags=t
-            ))
-            dy = 0
         items.append(self.canvas.create_text(
-            cx, cy+dy+r+14 if not img else cy+48, text=label,
+            cx, cy - r + 14, text=kind,
+            font=("Arial", self._sf(14), "bold"), fill=C_TEXT, anchor="center", tags=t
+        ))
+        needle = self.canvas.create_line(
+            cx, cy, cx + (r-18), cy,
+            fill="#D32F2F", width=4, arrow="last", arrowshape=(10,12,3), tags=t
+        )
+        pivot = self.canvas.create_oval(cx-4, cy-4, cx+4, cy+4, fill="#212121", outline="", tags=t)
+        items.append(needle)
+        items.append(pivot)
+        dy = 0
+        items.append(self.canvas.create_text(
+            cx, cy + r + 16, text=label,
             font=("Arial", self._sf(11), "bold"), fill=C_TEXT, anchor="n", tags=t
         ))
         val_tags = (tag, specific_tag + "_val") if specific_tag else tag
         val = self.canvas.create_text(
-            cx, cy+dy+r+32 if not img else cy+63, text="",
+            cx, cy + r + 34, text="",
             font=("Consolas", self._sf(11)), fill="#D32F2F", anchor="n", tags=val_tags
         )
         items.append(val)
+        if specific_tag == "pa1":
+            self.pa1_needle = needle
+        elif specific_tag == "pv1":
+            self.pv1_needle = needle
+        elif specific_tag == "pv2":
+            self.pv2_needle = needle
+        elif specific_tag == "pv3":
+            self.pv3_needle = needle
         return items, val
 
     def draw_battery(self, x, y1, y2, label, tag):
@@ -890,14 +935,37 @@ class ResistorCartoon:
         return i, i*100.0, i*r2
 
     def update_readings(self, r2):
+        import math
         i, u1, u2 = self.calc_values(r2)
         i_ma = i * 1000
-        self.canvas.itemconfig(self.pa1_val, text="%d мА" % i_ma)
+        self.canvas.itemconfig(self.pa1_val, text="%d мА" % int(round(i_ma)))
         self.canvas.itemconfig(self.pv1_val, text="%.1f В" % u1)
         self.canvas.itemconfig(self.pv2_val, text="%.1f В" % u2)
         self.canvas.itemconfig(self.pv3_val, text="%.1f В" % (u1+u2))
         if hasattr(self, "r2_label"):
             self.canvas.itemconfig(self.r2_label, text="R2 = %d \u03a9" % r2)
+        def ang(kind, v):
+            if kind == "A":
+                vmin, vmax, a0, a1 = 0, 120, -130, 130
+            else:
+                vmin, vmax, a0, a1 = 0, 15, -130, 130
+            vv = max(vmin, min(vmax, v))
+            span = vmax - vmin if vmax > vmin else 1
+            return a0 + (vv - vmin) / span * (a1 - a0)
+        r_m = 36
+        cx_a, cy_a = PA1_CENTER
+        if getattr(self, 'pa1_needle', None) is not None:
+            a = math.radians(ang("A", i_ma))
+            self.canvas.coords(self.pa1_needle, cx_a, cy_a, cx_a + (r_m-18)*math.cos(a), cy_a + (r_m-18)*math.sin(a))
+        for needle, center, v in [
+            (getattr(self, 'pv1_needle', None), PV1_CENTER, u1),
+            (getattr(self, 'pv2_needle', None), PV2_CENTER, u2),
+            (getattr(self, 'pv3_needle', None), PV3_CENTER, u1+u2),
+        ]:
+            if needle is not None:
+                x,y = center
+                a2 = math.radians(ang("V", v))
+                self.canvas.coords(needle, x,y, x + (r_m-18)*math.cos(a2), y + (r_m-18)*math.sin(a2))
 
     PHASES = [
         ("step0",       "Шаг 1 из 9","Приветствие"),
