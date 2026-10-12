@@ -999,13 +999,15 @@ class ResistorCartoon:
             if needle is None:
                 continue
             a = math.radians(_meter_angle(kind, v))
+            ca, sa = math.cos(a), math.sin(a)
             px = center[0]
             py = center[1] + METER_PIVOT_DY
-            bx = px - METER_NEEDLE_TAIL * math.cos(a)
-            by = py - METER_NEEDLE_TAIL * math.sin(a)
-            tx = px + METER_NEEDLE_LEN * math.cos(a)
-            ty = py + METER_NEEDLE_LEN * math.sin(a)
-            self.canvas.coords(needle, bx, by, tx, ty)
+            s = self._scale
+            self.canvas.coords(
+                needle,
+                (px - METER_NEEDLE_TAIL * ca) * s, (py - METER_NEEDLE_TAIL * sa) * s,
+                (px + METER_NEEDLE_LEN * ca) * s, (py + METER_NEEDLE_LEN * sa) * s,
+            )
 
     PHASES = [
         ("step0",       "Шаг 1 из 9","Приветствие"),
@@ -1280,15 +1282,15 @@ class ResistorCartoon:
     def highlight_property1(self):
         self.clear_highlights()
         for cx,cy in [PV1_CENTER, PV2_CENTER, PV3_CENTER]:
-            self._hl_frame(cx-45, cy-45, cx+45, cy+45, "#E65100")
+            self._hl_frame(cx-52, cy-48, cx+52, cy+70, "#E65100")
         self._hl_text("U = U\u2081 + U\u2082 = 4 + 8 = 12 В", "#D32F2F")
 
     def highlight_property2(self):
         self.clear_highlights()
         self._hl_frame(R1_LEFT-10, R1_Y-32, R1_RIGHT+10, R1_Y+32, "#1565C0")
         self._hl_frame(R2_LEFT-10, R2_Y-32, R2_RIGHT+10, R2_Y+32, "#1565C0")
-        self._hl_frame(PV1_CENTER[0]-45, PV1_CENTER[1]-45, PV1_CENTER[0]+45, PV1_CENTER[1]+45, "#2E7D32")
-        self._hl_frame(PV2_CENTER[0]-45, PV2_CENTER[1]-45, PV2_CENTER[0]+45, PV2_CENTER[1]+45, "#2E7D32")
+        self._hl_frame(PV1_CENTER[0]-52, PV1_CENTER[1]-48, PV1_CENTER[0]+52, PV1_CENTER[1]+70, "#2E7D32")
+        self._hl_frame(PV2_CENTER[0]-52, PV2_CENTER[1]-48, PV2_CENTER[0]+52, PV2_CENTER[1]+70, "#2E7D32")
         self._hl_text("R\u2082/R\u2081 = U\u2082/U\u2081 = 200/100 = 8/4 = 2", "#1565C0")
 
     def highlight_property3(self):
@@ -1304,9 +1306,10 @@ class ResistorCartoon:
         self._junction_hl_items = []
         if not visible:
             return
+        s = self._scale
         for jx, jy in JUNCTION_DOTS:
             dot = self.canvas.create_oval(
-                jx-8, jy-8, jx+8, jy+8,
+                (jx-8)*s, (jy-8)*s, (jx+8)*s, (jy+8)*s,
                 fill="#212121", outline="", tags="hl_junc"
             )
             self._junction_hl_items.append(dot)
