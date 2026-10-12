@@ -454,32 +454,38 @@ class ResistorCartoon:
         # Шкала (дуга над осью вращения стрелки)
         px, py = cx, cy + METER_PIVOT_DY
         if kind == "A":
-            vmin, vmax, step_major, step_minor = 0, 120, 20, 10
+            vmin, vmax = 0, 120
+            label_step, med_step, min_step = 40, 20, 10
         else:
-            vmin, vmax, step_major, step_minor = 0, 15, 3, 1.5
+            vmin, vmax = 0, 15
+            label_step, med_step, min_step = 5, 1, 1
         span = vmax - vmin if vmax > vmin else 1
         a0, a1 = METER_ANG0, METER_ANG1
-        for val in np.arange(vmin, vmax + 1e-6, step_minor):
+        for val in np.arange(vmin, vmax + 1e-6, min_step):
             a = a0 + (val - vmin) / span * (a1 - a0)
             rad = math.radians(a)
-            is_major = abs(val % step_major) < 1e-4 or abs(val - vmax) < 1e-4
-            if is_major:
+            near_max = abs(val - vmax) < 1e-4
+            is_label = near_max or abs(val % label_step) < 1e-4
+            is_med = (not is_label) and abs(val % med_step) < 1e-4
+            if is_label:
                 r1s, r2s, wdt = METER_RARC, METER_RARC-9, 2
+            elif is_med:
+                r1s, r2s, wdt = METER_RARC, METER_RARC-6, 1
             else:
-                r1s, r2s, wdt = METER_RARC, METER_RARC-5, 1
+                r1s, r2s, wdt = METER_RARC, METER_RARC-4, 1
             items.append(self.canvas.create_line(
                 px + r1s*math.cos(rad), py + r1s*math.sin(rad),
                 px + r2s*math.cos(rad), py + r2s*math.sin(rad),
                 fill="#424242", width=wdt, tags=t
             ))
-            if is_major:
+            if is_label:
                 tr = METER_RARC - 17
                 tx = px + tr * math.cos(rad)
                 ty = py + tr * math.sin(rad)
                 txt = "%d" % int(val) if abs(val - int(val)) < 1e-3 else "%g" % val
                 items.append(self.canvas.create_text(
                     tx, ty, text=txt,
-                    font=("Arial", self._sf(8), "bold"), fill=C_TEXT,
+                    font=("Arial", self._sf(9), "bold"), fill=C_TEXT,
                     anchor="center", tags=t
                 ))
         # Стрелка (в исходном положении — на нуле шкалы)
@@ -493,11 +499,19 @@ class ResistorCartoon:
         items.append(self.canvas.create_oval(
             px-4, py-4, px+4, py+4, fill="#212121", outline="", tags=t
         ))
-        # Цифровое показание под корпусом
+        # Цифровое показание: тёмный ЖК-экран под корпусом
         val_tags = (tag, specific_tag + "_val") if specific_tag else tag
+        lcd_w = METER_W - 8
+        lcd_h = 22
+        lcd_top = cy + h2 + 2
+        items.append(self.canvas.create_rectangle(
+            cx-lcd_w/2, lcd_top, cx+lcd_w/2, lcd_top+lcd_h,
+            fill="#1B1B1B", outline="#0D47A1", width=2, tags=val_tags
+        ))
         val = self.canvas.create_text(
-            cx, cy + h2 + 6, text="",
-            font=("Consolas", self._sf(11)), fill="#D32F2F", anchor="n", tags=val_tags
+            cx, lcd_top + lcd_h/2, text="0.0",
+            font=("Consolas", self._sf(12), "bold"), fill="#39FF6A",
+            anchor="center", tags=val_tags
         )
         items.append(val)
         if specific_tag == "pa1":
