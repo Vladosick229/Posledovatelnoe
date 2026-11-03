@@ -2,11 +2,8 @@ import sys
 import tkinter as tk
 from tkinter import ttk
 import time
-import threading
 import os
-import queue
-import pythoncom
-import win32com.client
+import ctypes
 from PIL import Image, ImageTk
 import cv2
 import numpy as np
@@ -19,98 +16,64 @@ def resource_path(rel):
         base = os.path.dirname(__file__)
     return os.path.join(base, rel)
 
-class TTSManager:
+class AudioPlayer:
+    """Plays the pre-recorded narration tracks through the Windows MCI API.
+
+    MCI is used instead of winsound because it supports pause/resume and
+    starting playback from an arbitrary position (needed for timing).
+    """
+
+    _ALIAS = "narration_track"
+
     def __init__(self):
-        self._queue = queue.Queue()
-        self._voice = None
-        self._start_worker()
+        self._mci = ctypes.windll.winmm.mciSendStringW
+        self._buffer = ctypes.create_unicode_buffer(512)
+        self._open_path = None
 
-    def _start_worker(self):
-        def _worker():
-            pythoncom.CoInitialize()
-            try:
-                v = win32com.client.Dispatch("SAPI.SpVoice")
-                v.Rate = 3
-                v.Volume = 100
-                v.Speak("", 1)  # warm up engine to avoid first-word delay
-                self._voice = v
-                while True:
-                    item = self._queue.get()
-                    if item is None:
-                        v = None
-                        self._voice = None
-                        break
-                    text, callback = item
-                    try:
-                        v.Speak(text, 0)
-                    except Exception:
-                        pass
-                    if callback:
-                        callback()
-            finally:
-                pythoncom.CoUninitialize()
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
+    def _cmd(self, command):
+        error = self._mci(command, self._buffer, len(self._buffer), None)
+        return error, self._buffer.value
 
-    def speak(self, text, callback=None):
-        self._queue.put((text, callback))
-
-    def estimate_ms(self, text):
-        chars = len(text)
-        return max(2500, chars * 55)
+    def play(self, path, start_ms=0):
+        self.stop()
+        if not path or not os.path.exists(path):
+            return False
+        error, _ = self._cmd('open "%s" type waveaudio alias %s' % (path, self._ALIAS))
+        if error:
+            return False
+        self._cmd("set %s time format milliseconds" % self._ALIAS)
+        error, _ = self._cmd("play %s from %d" % (self._ALIAS, max(0, int(start_ms))))
+        if error:
+            self._cmd("close %s" % self._ALIAS)
+            return False
+        self._open_path = path
+        return True
 
     def pause(self):
-        if self._voice:
-            try:
-                self._voice.Pause()
-            except Exception:
-                pass
+        if self._open_path:
+            self._cmd("pause %s" % self._ALIAS)
 
     def resume(self):
-        if self._voice:
-            try:
-                self._voice.Resume()
-            except Exception:
-                pass
+        if self._open_path:
+            self._cmd("resume %s" % self._ALIAS)
 
     def stop(self):
-        self.resume()
-        self._queue.queue.clear()
+        if self._open_path:
+            self._cmd("stop %s" % self._ALIAS)
+            self._cmd("close %s" % self._ALIAS)
+            self._open_path = None
 
-TIMINGS = {
-    "step0_welcome":         6000,
-    "step1_show_resistors": 4000,
-    "step2_show_meters":    4000,
-    "step3_show_battery":   3000,
-    "step4_build_wires":    7000,
-    "step5_initial_values": 7000,
-    "step6_property1":      7000,
-    "step6_property2":      7000,
-    "step6_property3":      7000,
-    "step7_r2_150":         5000,
-    "step7_r2_100":         5000,
-    "step7_r2_50":          5000,
-    "step7_r2_25":          5000,
-    "step7_r2_0":           5000,
-    "step8_finish":         8000,
-}
-
-NARRATION = [
-    "Здравствуйте! В этом видеоуроке мы познакомимся с последовательным соединением резисторов и его свойствами. Мы соберём электрическую цепь, проведём измерения и убедимся в справедливости законов последовательного соединения.",
-    "Свойства последовательного соединения можно продемонстрировать с помощью несложного опыта. Для его проведения нам понадобятся два резистора: первый резистор с сопротивлением 100 Ом, второй резистор с переменным сопротивлением.",
-    "Также для определения силы тока и напряжений будут использоваться электроизмерительные приборы: миллиамперметр и три вольтметра.",
-    "Для получения экспериментальных данных будем использовать источник постоянного напряжения 12 Вольт.",
-    "Собираем электрическую цепь с последовательным соединением резисторов. Следует помнить, что амперметр включается последовательно с элементами, ток через которые требуется измерить, а вольтметры включаются параллельно.",
-    "Первоначально установим сопротивление переменного резистора R2 равным 200 Ом. При этом амперметр будет показывать силу тока 40 миллиампер, первый вольтметр показывает напряжение 4 Вольта, второй вольтметр показывает напряжение 8 Вольт, третий вольтметр показывает 12 Вольт.",
-    "С помощью этих показаний подтверждается первое свойство последовательного соединения: общее напряжение равно сумме напряжений на всех последовательно соединенных участках, то есть 4 плюс 8 равно 12 Вольт.",
-    "Второе свойство: общее напряжение распределяется по участкам прямо пропорционально их сопротивлениям. Сопротивление второго резистора в 2 раза больше сопротивления первого, поэтому напряжение на втором резисторе в два раза больше, чем на первом.",
-    "По показаниям приборов, используя закон Ома, можно рассчитать сопротивление цепи. Оно будет равно 300 Ом. Эквивалентное сопротивление равно сумме сопротивлений всех последовательно соединенных участков: 100 плюс 200 равно 300 Ом.",
-    "При уменьшении сопротивления одного из последовательно соединенных элементов сила тока в цепи увеличивается, при этом напряжения на участках изменяются, но их сумма равна общему напряжению. Уменьшаем R2 до 150 Ом.",
-    "R2 равно 100 Ом. Ток растёт, напряжения U1 и U2 выравниваются.",
-    "R2 равно 50 Ом. Ток значительно возрос, напряжение на втором резисторе стало меньше, чем на первом.",
-    "R2 равно 25 Ом. Почти короткое замыкание: ток 96 миллиампер, напряжение U2 всего 2.4 Вольта.",
-    "R2 равно 0 Ом. Короткое замыкание. Всё напряжение на первом резисторе. Ток 120 миллиампер.",
-    "Повторим свойства последовательного соединения: общее напряжение равно сумме напряжений на участках, эквивалентное сопротивление равно сумме сопротивлений, ток в цепи определяется по закону Ома.",
+# Text shown in the speech bubble at the start of each phase. It follows the
+# recorded narration, but is shortened where the bubble would overflow.
+PHASE_SPEECH = [
+    "Свойство последовательного соединения можно продемонстрировать с помощью несложного опыта. Нам понадобятся два резистора: R1 = 100 Ом и R2 с переменным сопротивлением.",
+    "Для определения силы тока и напряжений будем использовать миллиамперметр и три вольтметра.",
+    "Для получения экспериментальных данных будем использовать источник постоянного напряжения 12 В.",
+    "Собираем электрическую цепь. Амперметр включается последовательно, а вольтметры — параллельно.",
+    "R2 = 200 Ом. Амперметр показывает 40 мА, вольтметры — 4 В, 8 В и 12 В.",
+    "С помощью этих показаний подтверждаются два основных свойства последовательного соединения.",
+    "По показаниям приборов, используя закон Ома, можно рассчитать сопротивление цепи: Rэкв = 100 + 200 = 300 Ом.",
+    "При уменьшении сопротивления сила тока в цепи увеличивается, напряжения на участках изменяются, а их сумма равна общему напряжению.",
 ]
 
 C_BG          = "#f5f0e8"
@@ -173,6 +136,27 @@ MEDIA_DIR = resource_path("media")
 PHOTOS_DIR = os.path.join(MEDIA_DIR, "photos")
 CUBE_IMG_PATH = os.path.join(MEDIA_DIR, "kubik.png")
 CUBE_VIDEO_PATH = os.path.join(MEDIA_DIR, "kubik.webm")
+VOICEOVER_DIR = os.path.join(MEDIA_DIR, "voiceover")
+
+# Recorded narration: file name, start offset (ms), end offset (ms).
+# Offsets and durations were measured from the supplied .ogg paragraphs.
+PHASE_AUDIO = {
+    "step1":     ("01_resistors.wav",     0, 16294),
+    "step2":     ("02_meters.wav",        0, 10854),
+    "step3":     ("03_source.wav",        0,  7434),
+    "step4":     ("04_circuit.wav",       0, 15573),
+    "step5":     ("05_readings.wav",      0, 23453),
+    "step6":     ("06_properties.wav",    0, 42974),
+    "step6_p3":  ("07_equivalent.wav",    0, 24974),
+    "step7":     ("08_r2_change.wav",     0, 16694),
+}
+
+# The last phase keeps running after its track ends: the R2 values are shown
+# one after another and the summary panel appears at the end.
+PHASE_DURATIONS_BY_KEY = {
+    key: (end - start) + 300 for key, (_, start, end) in PHASE_AUDIO.items()
+}
+PHASE_DURATIONS_BY_KEY["step7"] = 24000
 
 SW = []
 def w(x1,y1,x2,y2): SW.append((x1+DX,y1+DY,x2+DX,y2+DY))
@@ -216,26 +200,52 @@ ALL_WIRE_STEPS = SW + BW
 
 _REF_SCALE = 4/3
 
-# --- Sub-phase groups for sequential element revealing ---
-# Each sub-group has a delay (ms from phase start) and a list of canvas tags to show
+# --- Timed events inside a phase ---------------------------------------------
+# t_ms is measured from the beginning of that phase's audio track.  Every event
+# may reveal canvas tags and/or run a named action (formula/highlight switch).
+PROPERTY1_TEXT = (
+    "Первое свойство: общее напряжение равно сумме напряжений на всех "
+    "последовательно соединённых участках: 4 + 8 = 12 В."
+)
+PROPERTY2_TEXT = (
+    "Второе свойство: напряжение распределяется по участкам прямо "
+    "пропорционально их сопротивлениям: R2/R1 = U2/U1 = 2."
+)
+SUMMARY_TEXT = (
+    "Свойства последовательного соединения: U = U1 + U2;  Rэкв = R1 + R2;  "
+    "I = U / (R1 + R2);  R2/R1 = U2/U1."
+)
+
 SUB_PHASE_GROUPS = {
     "step1": [
-        {"trigger": "первый резистор", "tags": ["r1"]},
-        {"trigger": "второй резистор", "tags": ["r2"]},
+        {"t_ms": 10050, "tags": ["r1"]},   # «Первый резистор…»
+        {"t_ms": 13200, "tags": ["r2"]},   # «Второй резистор…»
     ],
     "step2": [
-        {"trigger": "миллиамперметр", "tags": ["pa1"]},
-        {"trigger": "три вольтметра", "tags": ["pv1", "pv2", "pv3"]},
+        {"t_ms": 7250, "tags": ["pa1"]},                    # «миллиамперметр…»
+        {"t_ms": 8750, "tags": ["pv1", "pv2", "pv3"]},      # «…и три вольтметра»
     ],
     "step3": [
-        {"trigger": "источник постоянного", "tags": ["e1", "e1_wire", "battery_photo"]},
+        {"t_ms": 3600, "tags": ["e1", "e1_wire", "battery_photo"]},
     ],
     "step5": [
-        {"trigger": "200 Ом",      "tags": []},
-        {"trigger": "40 миллиампер", "tags": ["pa1_val"]},
-        {"trigger": "4 Вольта",     "tags": ["pv1_val"]},
-        {"trigger": "8 Вольт",      "tags": ["pv2_val"]},
-        {"trigger": "12 Вольт",     "tags": ["pv3_val"]},
+        {"t_ms": 5300,  "tags": []},            # R2 = 200 Ом
+        {"t_ms": 9900,  "tags": ["pa1_val"]},   # 40 мА
+        {"t_ms": 14800, "tags": ["pv1_val"]},   # 4 В
+        {"t_ms": 19300, "tags": ["pv2_val"]},   # 8 В
+        {"t_ms": 21700, "tags": ["pv3_val"]},   # 12 В
+    ],
+    "step6": [
+        {"t_ms": 7320,  "action": "property1", "text": PROPERTY1_TEXT},
+        {"t_ms": 20000, "action": "property2", "text": PROPERTY2_TEXT},
+    ],
+    "step7": [
+        {"t_ms": 0,     "action": "r2_150"},
+        {"t_ms": 4200,  "action": "r2_100"},
+        {"t_ms": 7800,  "action": "r2_50"},
+        {"t_ms": 11200, "action": "r2_25"},
+        {"t_ms": 14600, "action": "r2_0"},
+        {"t_ms": 17800, "action": "summary", "text": SUMMARY_TEXT},
     ],
 }
 
@@ -248,6 +258,7 @@ class ResistorCartoon:
         self.px2 = int(sw / self._scale)
         self.px1 = self.px2 - 550
         self.root.title("Последовательное соединение резисторов - обучающий видеоурок")
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.state("zoomed")
         self.root.resizable(False, False)
 
@@ -262,9 +273,6 @@ class ResistorCartoon:
         self.wire_in_progress = False
         self._schedule_time = 0
         self._timer_update_id = None
-        self._speech_ended = False
-        self._speech_phase_idx = -1
-        self._min_phase_dur_ms = 0
         self._junction_hl_timers = []
         self._junction_hl_items = []
         self.wires_visible = 0
@@ -282,7 +290,7 @@ class ResistorCartoon:
         self.cube_items = []
         self.speech_items = []
 
-        self.tts = TTSManager()
+        self.narrator = AudioPlayer()
         self._speech_delay_id = None
         self.pa1_needle = None
         self.pv1_needle = None
@@ -827,21 +835,6 @@ class ResistorCartoon:
         rgb = bgr_frame[...,::-1]
         return np.dstack((rgb, alpha))
 
-    def _get_trigger_delay(self, phase_key, trigger):
-        """Calculate delay in ms for a sub-phase trigger word within the narration text."""
-        idx = next((i for i, (pk,_,_) in enumerate(self.PHASES) if pk == phase_key), None)
-        if idx is None or idx >= len(NARRATION):
-            return 0
-        text = NARRATION[idx]
-        pos = text.find(trigger)
-        if pos < 0:
-            return 0
-        chars_before = len(text[:pos])
-        total_chars = max(len(text), 1)
-        total_dur = self.tts.estimate_ms(text)
-        delay = int(total_dur * chars_before / total_chars)
-        return max(0, delay - 600)  # slightly before the word is fully spoken
-
     def _start_video(self):
         self._video_playing = True
         if self._video_cap is None or not self._video_cap.isOpened():
@@ -907,6 +900,31 @@ class ResistorCartoon:
             self.canvas.itemconfig(item, state="hidden")
 
     def _activate_sub_group(self, phase_key, sub_idx):
+        groups = SUB_PHASE_GROUPS.get(phase_key, [])
+        event = groups[sub_idx] if 0 <= sub_idx < len(groups) else {}
+
+        action = event.get("action")
+        if action == "property1":
+            self.show_formula("step6_p1")
+            self.show_speech(event.get("text", PROPERTY1_TEXT))
+            self.highlight_property1()
+        elif action == "property2":
+            self.show_formula("step6_p2")
+            self.show_speech(event.get("text", PROPERTY2_TEXT))
+            self.highlight_property2()
+        elif action and action.startswith("r2_"):
+            r2 = int(action[3:])
+            self.update_readings(r2)
+            self.highlight_r2_table_row({150: 1, 100: 2, 50: 3, 25: 4, 0: 5}.get(r2, 0))
+            self.highlight_junction_points(True)
+        elif action == "summary":
+            self._clear_formula_highlights()
+            self.show_formula("step8")
+            self.show_speech(event.get("text", SUMMARY_TEXT))
+            self.highlight_junction_points(False)
+        elif event.get("text"):
+            self.show_speech(event["text"])
+
         if phase_key in self.active_sub_groups:
             self.active_sub_groups[phase_key].add(sub_idx)
         self._highlight_formula_data(phase_key, sub_idx)
@@ -937,7 +955,7 @@ class ResistorCartoon:
                 else:
                     # Fallback: show items by tags
                     if phase_key in SUB_PHASE_GROUPS and sub_idx < len(SUB_PHASE_GROUPS[phase_key]):
-                        tags = SUB_PHASE_GROUPS[phase_key][sub_idx]["tags"]
+                        tags = SUB_PHASE_GROUPS[phase_key][sub_idx].get("tags", [])
                         for tag in tags:
                             for item in self.canvas.find_withtag(tag):
                                 self.canvas.itemconfig(item, state="normal")
@@ -1010,36 +1028,22 @@ class ResistorCartoon:
             )
 
     PHASES = [
-        ("step0",       "Шаг 1 из 9","Приветствие"),
-        ("step1",       "Шаг 2 из 9","Появление резисторов R1 = 100 Ом и R2 = 0\u2026200 Ом"),
-        ("step2",       "Шаг 3 из 9","Добавление измерительных приборов PA1, PV1\u2013PV3"),
-        ("step3",       "Шаг 4 из 9","Подключение источника E1 = 12 В"),
-        ("step4",       "Шаг 5 из 9","Сборка цепи: последовательное соединение"),
-        ("step5",       "Шаг 6 из 9","Показания приборов при R2 = 200 Ом"),
-        ("step6_p1",    "Шаг 7 из 9","Свойство 1: U = U\u2081 + U\u2082 (12 = 4 + 8)"),
-        ("step6_p2",    "Шаг 7 из 9","Свойство 2: R\u2082/R\u2081 = U\u2082/U\u2081 = 2"),
-        ("step6_p3",    "Шаг 7 из 9","Свойство 3: Rэкв = R\u2081 + R\u2082 = 300 Ом"),
-        ("step7_r2_150","Шаг 8 из 9","R\u2082 = 150 Ом \u2013 показания меняются"),
-        ("step7_r2_100","Шаг 8 из 9","R\u2082 = 100 Ом \u2013 ток растёт"),
-        ("step7_r2_50", "Шаг 8 из 9","R\u2082 = 50 Ом \u2013 напряжение U\u2082 падает"),
-        ("step7_r2_25", "Шаг 8 из 9","R\u2082 = 25 Ом \u2013 почти короткое замыкание"),
-        ("step7_r2_0",  "Шаг 8 из 9","R\u2082 = 0 Ом \u2013 всё напряжение на R\u2081!"),
-        ("step8",       "Шаг 9 из 9","Итог: свойства последовательного соединения"),
+        ("step1",       "Шаг 1 из 8","Появление резисторов R1 = 100 Ом и R2 = 0\u2026200 Ом"),
+        ("step2",       "Шаг 2 из 8","Добавление измерительных приборов PA1, PV1\u2013PV3"),
+        ("step3",       "Шаг 3 из 8","Подключение источника E1 = 12 В"),
+        ("step4",       "Шаг 4 из 8","Сборка цепи: последовательное соединение"),
+        ("step5",       "Шаг 5 из 8","Показания приборов при R2 = 200 Ом"),
+        ("step6",       "Шаг 6 из 8","Свойства 1 и 2: U = U\u2081 + U\u2082, R\u2082/R\u2081 = U\u2082/U\u2081"),
+        ("step6_p3",    "Шаг 7 из 8","Свойство 3: Rэкв = R\u2081 + R\u2082 = 300 Ом"),
+        ("step7",       "Шаг 8 из 8","Изменение R2: ток растёт, напряжения перераспределяются"),
     ]
-    PHASE_DURATIONS = [TIMINGS[k] for k in (
-        "step0_welcome",
-        "step1_show_resistors","step2_show_meters","step3_show_battery",
-        "step4_build_wires","step5_initial_values",
-        "step6_property1","step6_property2","step6_property3",
-        "step7_r2_150","step7_r2_100","step7_r2_50","step7_r2_25","step7_r2_0",
-        "step8_finish",
-    )]
+    PHASE_DURATIONS = [PHASE_DURATIONS_BY_KEY[p[0]] for p in PHASES]
     PHASE_FORMULA = [
         None,
-        None,"step5",None,None,"step5",
-        "step6_p1","step6_p2","step6_p3",
-        "step7","step7","step7","step7","step7",
-        "step8",
+        None, None, None, "step5",
+        None,
+        "step6_p3",
+        "step7",
     ]
 
     def enter_phase(self, idx):
@@ -1055,20 +1059,18 @@ class ResistorCartoon:
         self.status_label.config(text=status)
         self.update_progress(idx)
 
-        if idx < len(NARRATION):
-            if self._speech_delay_id:
-                self.root.after_cancel(self._speech_delay_id)
-            # Show speech text immediately so it syncs with voice
-            self.show_speech(NARRATION[idx])
+        if self._speech_delay_id:
+            self.root.after_cancel(self._speech_delay_id)
             self._speech_delay_id = None
-            self._speech_ended = False
-            self._speech_phase_idx = idx
-            self._min_phase_dur_ms = dur
-            cb_idx = idx
-            self.tts.speak(NARRATION[idx], callback=lambda: self.root.after_idle(lambda: self._on_speech_ended(cb_idx)))
+
+        # Show the speech-bubble text and start the recorded paragraph.
+        speech = PHASE_SPEECH[idx] if idx < len(PHASE_SPEECH) else status
+        self.show_speech(speech)
+        audio = PHASE_AUDIO.get(key)
+        if audio:
+            self.narrator.play(os.path.join(VOICEOVER_DIR, audio[0]), audio[1])
         else:
-            self._speech_ended = True
-            self.show_speech(status)
+            self.narrator.stop()
 
         # Cancel old sub-phase timers
         for tid, _, _, _ in self._sub_phase_timers:
@@ -1085,29 +1087,14 @@ class ResistorCartoon:
             elif pk in self.phase_items:
                 self.active_phases.add(pk)
 
-        # Schedule current phase sub-groups with trigger-based delays
-        if key in SUB_PHASE_GROUPS:
-            groups = SUB_PHASE_GROUPS[key]
-            if key not in self.active_sub_groups:
-                self.active_sub_groups[key] = set()
-            for sub_idx, sg in enumerate(groups):
-                delay = self._get_trigger_delay(key, sg["trigger"])
-                if delay <= 50:
-                    self.active_sub_groups[key].add(sub_idx)
-                else:
-                    deadline = time.time() + delay / 1000.0
-                    tid = self.root.after(delay, lambda k=key, si=sub_idx: self._activate_sub_group(k, si))
-                    self._sub_phase_timers.append((tid, deadline, key, sub_idx))
-        else:
-            self.active_phases.add(key)
-
-        # If step5: pre-set all reading texts (hidden via _val tag separation)
-        if idx == 5:
+        # Phase-specific readings are prepared before the timed events fire.
+        if key == "step5":
             self.update_readings(200)
 
-        self.refresh_display()
+        # Clear annotations left over from the previous phase.
+        self.clear_highlights()
 
-        # Formula
+        # Formula panel for this phase (step6 starts empty and is filled by events).
         fkey = self.PHASE_FORMULA[idx]
         if fkey:
             self.show_formula(fkey)
@@ -1117,69 +1104,43 @@ class ResistorCartoon:
             for item in self.f_panel_bg_items:
                 self.canvas.itemconfig(item, state="normal")
 
-        if idx == 0:
-            pass  # welcome greeting, no circuit elements yet
-        elif idx == 1:
-            pass  # readings already hidden, shown via sub-phases
-        elif idx == 5:
-            pass  # readings already hidden, shown via sub-phases
-        elif idx == 6:
-            self.highlight_property1()
-            self._highlight_formula_data("step6_p1", 0)
-        elif idx == 7:
-            self.highlight_property2()
-            self._highlight_formula_data("step6_p2", 0)
-        elif idx == 8:
+        if key == "step6_p3":
             self.highlight_property3()
-            self._highlight_formula_data("step6_p3", 0)
-        elif 9 <= idx <= 13:
-            r2_vals = [200,150,100,50,25,0]
-            sub = idx - 9
-            if sub < len(r2_vals):
-                self.update_readings(r2_vals[sub])
-                self.highlight_r2_table_row(sub)
-                self.highlight_junction_points(True)
-        elif idx == 14:
-            pass
 
-        if idx not in (6,7,8):
-            self.clear_highlights()
+        # Schedule the current phase's timed events.
+        if key in SUB_PHASE_GROUPS:
+            groups = SUB_PHASE_GROUPS[key]
+            if key not in self.active_sub_groups:
+                self.active_sub_groups[key] = set()
+            for sub_idx, sg in enumerate(groups):
+                delay = int(sg.get("t_ms", 0))
+                if delay <= 50:
+                    self._activate_sub_group(key, sub_idx)
+                else:
+                    deadline = time.time() + delay / 1000.0
+                    tid = self.root.after(delay, lambda k=key, si=sub_idx: self._activate_sub_group(k, si))
+                    self._sub_phase_timers.append((tid, deadline, key, sub_idx))
+        else:
+            self.active_phases.add(key)
 
-        if idx == 4:
+        self.refresh_display()
+
+        if key == "step4":
             self.wire_substep = 0
             self.wire_in_progress = True
             self.wires_visible = 0
             self.refresh_display()
-            self.root.after(50, self.advance_wires)
+            # The narration starts describing the circuit at ~5 s; begin
+            # drawing the series wires at that moment.
+            if self.wire_timer:
+                self.root.after_cancel(self.wire_timer)
+            self.wire_timer = self.root.after(4800, self.advance_wires)
         else:
             self.wire_in_progress = False
 
         self.phase_start = time.time()
-        if self._speech_ended:
-            self.phase_remaining = dur + 500
-            self.schedule_next(self.phase_remaining)
-        else:
-            # Backup timer (30s safety net); actual transition driven by _on_speech_ended
-            self.phase_remaining = dur + 30000
-            self.schedule_next(self.phase_remaining)
-
-    def _on_speech_ended(self, phase_idx):
-        """Called (in main thread) when TTS finishes speaking the current narration."""
-        if phase_idx != self._speech_phase_idx:
-            return  # stale callback from a previous phase
-        if self._in_transition or self.stopped or self.paused:
-            return
-        self._speech_ended = True
-        # Cancel backup timer if still pending
-        if self.phase_timer:
-            self.root.after_cancel(self.phase_timer)
-            self.phase_timer = None
-        elapsed = (time.time() - self.phase_start) * 1000
-        if elapsed >= self._min_phase_dur_ms:
-            self.root.after_idle(self.on_timeout)
-        else:
-            remaining = int(self._min_phase_dur_ms - elapsed + 300)
-            self.schedule_next(remaining)
+        self.phase_remaining = dur
+        self.schedule_next(dur)
 
     def schedule_next(self, delay_ms):
         if self.phase_timer:
@@ -1243,10 +1204,8 @@ class ResistorCartoon:
             self.wires_visible = self.wire_substep
             self.refresh_display()
             if self.wire_substep < len(self.wire_items):
-                # Slightly speed up toward the end for a more natural feel
-                remaining = len(self.wire_items) - self.wire_substep
-                delay = 200 if remaining > 6 else 160
-                self.wire_timer = self.root.after(delay, self.advance_wires)
+                # Draw the circuit over the whole explanatory paragraph.
+                self.wire_timer = self.root.after(450, self.advance_wires)
             else:
                 self.wire_in_progress = False
                 self.wires_visible = len(self.wire_items)
@@ -1401,7 +1360,7 @@ class ResistorCartoon:
         if not self.paused:
             self.paused = True
             self.btn_pause.config(text="  \u25b6 ПРОДОЛЖИТЬ  ")
-            self.tts.pause()
+            self.narrator.pause()
             self._stop_video()
             self._show_poster_frame()
             if self.phase_timer:
@@ -1433,7 +1392,7 @@ class ResistorCartoon:
         else:
             self.paused = False
             self.btn_pause.config(text="  \u23f8 ПАУЗА  ")
-            self.tts.resume()
+            self.narrator.resume()
             self._start_video()  # Resume video
             self.phase_start = time.time()
             if self.wire_in_progress:
@@ -1449,10 +1408,17 @@ class ResistorCartoon:
             self._sub_phase_remaining.clear()
             self.schedule_next(int(self.phase_remaining))
 
+    def on_close(self):
+        try:
+            self.narrator.stop()
+        except Exception:
+            pass
+        self.root.destroy()
+
     def on_reset(self):
         self.stopped = True
         self.paused = False
-        self.tts.stop()
+        self.narrator.stop()
         self._stop_video()
         if self._video_cap:
             self._video_cap.release()
@@ -1495,7 +1461,7 @@ class ResistorCartoon:
         sel = self.step_combo.get()
         for idx, (_, _, s) in enumerate(self.PHASES):
             if s == sel:
-                self.tts.stop()
+                self.narrator.stop()
                 self._stop_video()
                 if self.phase_timer:
                     self.root.after_cancel(self.phase_timer)
@@ -1549,11 +1515,12 @@ class ResistorCartoon:
                     pass
 
     def show_final(self):
+        self.narrator.stop()
         self.status_label.config(
             text="Видеоурок завершён! Нажмите «СБРОС» для повтора."
         )
         self.timer_label.config(text="\u2714")
-        self.step_label.config(text="Шаг 9 из 9")
+        self.step_label.config(text="Шаг 8 из 8")
         self.btn_pause.config(state="disabled")
         self._stop_video()
         self._show_poster_frame()
