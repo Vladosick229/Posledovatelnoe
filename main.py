@@ -130,7 +130,7 @@ def _meter_angle(kind, v):
     return METER_ANG0 + (v - vmin) / (vmax - vmin) * (METER_ANG1 - METER_ANG0)
 
 
-PANEL_Y1=65; PANEL_Y2=925
+PANEL_Y1=65; PANEL_Y2=918
 
 MEDIA_DIR = resource_path("media")
 PHOTOS_DIR = os.path.join(MEDIA_DIR, "photos")
@@ -615,122 +615,321 @@ class ResistorCartoon:
         self.phase_items = p
         self.create_formula_panel()
 
+    def _panel_inner(self):
+        return self.px1 + 20, self.px2 - 20
+
+    def _rounded_rect(self, x1, y1, x2, y2, r=12, **kwargs):
+        """Canvas rectangle with softly rounded corners."""
+        r = max(1, min(r, (x2 - x1) // 2, (y2 - y1) // 2))
+        pts = [
+            x1 + r, y1,  x2 - r, y1,  x2, y1,  x2, y1 + r,
+            x2, y2 - r,  x2, y2,  x2 - r, y2,  x1 + r, y2,
+            x1, y2,  x1, y2 - r,  x1, y1 + r,  x1, y1,
+        ]
+        return self.canvas.create_polygon(
+            pts, smooth=True, splinesteps=24, **kwargs
+        )
+
     def create_formula_panel(self):
-        px = self.px1 + 20
-        fy0 = PANEL_Y1 + 70
+        """Right-hand reference panel: centred, card-based and easy to scan."""
+        px1, px2 = self.px1, self.px2
+        cx = (px1 + px2) // 2
+        header_h = 60
+        x1, x2 = self._panel_inner()
+
         fi = []
         fi.append(self.canvas.create_rectangle(
-            self.px1, PANEL_Y1, self.px2, PANEL_Y2,
+            px1, PANEL_Y1, px2, PANEL_Y2,
             fill=C_PANEL_BG, outline=C_PANEL_BORDER, width=2, tags="f_all"
         ))
+        fi.append(self.canvas.create_rectangle(
+            px1 + 2, PANEL_Y1 + 2, px2 - 2, PANEL_Y1 + header_h - 2,
+            fill="#37474F", outline="", tags="f_all"
+        ))
+        fi.append(self.canvas.create_rectangle(
+            px1 + 2, PANEL_Y1 + header_h - 5, px2 - 2, PANEL_Y1 + header_h - 1,
+            fill="#FFB300", outline="", tags="f_all"
+        ))
         fi.append(self.canvas.create_text(
-            (self.px1+self.px2)//2, PANEL_Y1+25,
-            text="Свойства цепи",
-            font=("Arial", self._sf(24), "bold"), fill=C_TABLE_HEADER,
+            cx, PANEL_Y1 + 31, text="СВОЙСТВА ЦЕПИ",
+            font=("Arial", self._sf(21), "bold"), fill="#FFFFFF",
             anchor="center", tags="f_all"
         ))
+        self.f_subtitle = self.canvas.create_text(
+            cx, PANEL_Y1 + header_h + 24, text="",
+            font=("Arial", self._sf(14)), fill="#607D8B",
+            anchor="center", tags="f_all"
+        )
+        fi.append(self.f_subtitle)
         self.f_panel_bg_items = fi
         self.formula_items.extend(fi)
 
+        # --- Step 5: measured values as a centred 2x3 card grid -------------
         self.f5_items = []
-        ty = fy0
-        self.f5_items.append(self.canvas.create_text(
-            px, ty,
-            text="{:15}{:>8}".format("Параметр", "Значение"),
-            font=("Consolas", self._sf(20), "bold"), fill=C_TABLE_HEADER,
-            anchor="w", tags="f_step5"
-        ))
-        for i, (param, val) in enumerate([
-            ("R1", "100 Ом"), ("R2", "200 Ом"),
-            ("I", "40 мА"), ("U1", "4.0 В"),
-            ("U2", "8.0 В"), ("Uобщ", "12 В"),
-        ]):
-            y = ty + 40 + i*36
-            self.f5_items.append(self.canvas.create_text(
-                px, y, text="{:15}{:>8}".format(param, val),
-                font=("Consolas", self._sf(20)), fill=C_TEXT,
-                anchor="w", tags="f_step5"
-            ))
+        self.f5_cards = []
+        card_gap = 14
+        card_w = (x2 - x1 - card_gap) // 2
+        card_h = 128
+        card_top = 174
+        values = [
+            ("R\u2081  ·  резистор 1", "100 Ом"),
+            ("R\u2082  ·  резистор 2", "200 Ом"),
+            ("I  ·  сила тока", "40 мА"),
+            ("U\u2081  ·  напряжение", "4,0 В"),
+            ("U\u2082  ·  напряжение", "8,0 В"),
+            ("Uобщ  ·  напряжение", "12 В"),
+        ]
+        for i, (label, value) in enumerate(values):
+            col, row = i % 2, i // 2
+            cx1 = x1 + col * (card_w + card_gap)
+            cy1 = card_top + row * (card_h + card_gap)
+            cx2, cy2 = cx1 + card_w, cy1 + card_h
+            ccx = (cx1 + cx2) // 2
+            bg = self._rounded_rect(
+                cx1, cy1, cx2, cy2, r=12,
+                fill="#F7F9FA", outline="#DFE6EA", width=1, tags="f_step5"
+            )
+            lab = self.canvas.create_text(
+                ccx, cy1 + 38, text=label,
+                font=("Arial", self._sf(14)), fill="#607D8B",
+                anchor="center", tags="f_step5"
+            )
+            val = self.canvas.create_text(
+                ccx, cy1 + 84, text=value,
+                font=("Arial", self._sf(26), "bold"), fill=C_TEXT,
+                anchor="center", tags="f_step5"
+            )
+            self.f5_items.extend([bg, lab, val])
+            self.f5_cards.append({"bg": bg, "label": lab, "value": val})
+
+        sy1, sy2 = 614, 786
+        sbg = self._rounded_rect(
+            x1, sy1, x2, sy2, r=14,
+            fill="#F1F8E9", outline="#C5E1A5", width=1, tags="f_step5"
+        )
+        st = self.canvas.create_text(
+            cx, sy1 + 33, text="Проверка по закону Ома",
+            font=("Arial", self._sf(15), "bold"), fill="#2E7D32",
+            anchor="center", tags="f_step5"
+        )
+        s1 = self.canvas.create_text(
+            cx, sy1 + 80,
+            text="I = Uобщ / (R\u2081 + R\u2082) = 12 / 300 = 0,04 А",
+            font=("Arial", self._sf(17)), fill=C_TEXT,
+            anchor="center", tags="f_step5"
+        )
+        s2 = self.canvas.create_text(
+            cx, sy1 + 123,
+            text="I = 40 мА;   U\u2081 + U\u2082 = 4 + 8 = 12 В",
+            font=("Arial", self._sf(16), "bold"), fill="#37474F",
+            anchor="center", tags="f_step5"
+        )
+        note = self.canvas.create_text(
+            cx, 824, text="R\u2082 = 200 Ом — исходное состояние цепи",
+            font=("Arial", self._sf(13), "italic"), fill="#78909C",
+            anchor="center", tags="f_step5"
+        )
+        self.f5_items.extend([sbg, st, s1, s2, note])
         self.formula_items.extend(self.f5_items)
 
+        # --- Step 6: three properties, progressively added as cards ----------
         self.f6_groups = []
-        for lines in [
-            ["U = U\u2081 + U\u2082", "12 В = 4 В + 8 В",
-             "Напряжение на участке равно", "сумме напряжений на",
-             "отдельных резисторах."],
-            ["R\u2082 / R\u2081 = U\u2082 / U\u2081", "200 / 100 = 8 / 4 = 2",
-             "Сопротивления", "пропорциональны", "напряжениям."],
-            ["R\u044d\u043a\u0432 = R\u2081 + R\u2082",
-             "Rэкв = 100 + 200 = 300 Ом",
-             "Эквивалентное", "сопротивление равно", "сумме сопротивлений."],
-        ]:
+        self.f6_cards = []
+        f6_top = 168
+        f6_h = 225
+        f6_gap = 20
+        properties = [
+            ("U = U\u2081 + U\u2082", "12 В = 4 В + 8 В",
+             "Общее напряжение равно сумме\nнапряжений на всех участках.",
+             "#1565C0"),
+            ("R\u2082 / R\u2081 = U\u2082 / U\u2081", "200 / 100 = 8 / 4 = 2",
+             "Напряжения распределяются прямо\nпропорционально сопротивлениям.",
+             "#2E7D32"),
+            ("Rэкв = R\u2081 + R\u2082", "Rэкв = 100 + 200 = 300 Ом",
+             "Эквивалентное сопротивление\nравно сумме сопротивлений.",
+             "#E65100"),
+        ]
+        for gi, (formula, value, desc, accent) in enumerate(properties):
+            y1 = f6_top + gi * (f6_h + f6_gap)
+            y2 = y1 + f6_h
             grp = []
-            y0 = fy0
-            for li, line in enumerate(lines):
-                fs = self._sf(22 if li < 2 else 18)
-                fw = "bold" if li < 2 else "normal"
-                fc = "#D32F2F" if li < 2 else C_TEXT
-                y = y0 + li*40 + len(self.f6_groups)*160
-                grp.append(self.canvas.create_text(
-                    px, y, text=line,
-                    font=("Arial", fs, fw), fill=fc,
-                    anchor="w", tags="f_step6"
-                ))
+            bg = self._rounded_rect(
+                x1, y1, x2, y2, r=14,
+                fill="#F7F9FA", outline="#DFE6EA", width=1, tags="f_step6"
+            )
+            grp.append(bg)
+            grp.append(self.canvas.create_rectangle(
+                x1 + 18, y1 + 2, x2 - 18, y1 + 6,
+                fill=accent, outline="", tags="f_step6"
+            ))
+            grp.append(self.canvas.create_oval(
+                x1 + 24, y1 + 24, x1 + 66, y1 + 66,
+                fill=accent, outline="", tags="f_step6"
+            ))
+            grp.append(self.canvas.create_text(
+                x1 + 45, y1 + 45, text=str(gi + 1),
+                font=("Arial", self._sf(18), "bold"), fill="#FFFFFF",
+                anchor="center", tags="f_step6"
+            ))
+            grp.append(self.canvas.create_text(
+                x1 + 82, y1 + 45, text="СВОЙСТВО %d" % (gi + 1),
+                font=("Arial", self._sf(14), "bold"), fill=accent,
+                anchor="w", tags="f_step6"
+            ))
+            formula_item = self.canvas.create_text(
+                cx, y1 + 92, text=formula,
+                font=("Arial", self._sf(25), "bold"), fill="#C62828",
+                anchor="center", tags="f_step6"
+            )
+            value_item = self.canvas.create_text(
+                cx, y1 + 137, text=value,
+                font=("Arial", self._sf(19)), fill=C_TEXT,
+                anchor="center", tags="f_step6"
+            )
+            grp.append(formula_item)
+            grp.append(value_item)
+            grp.append(self.canvas.create_line(
+                x1 + 34, y1 + 166, x2 - 34, y1 + 166,
+                fill="#E0E6EA", width=1, tags="f_step6"
+            ))
+            grp.append(self.canvas.create_text(
+                cx, y1 + 197, text=desc,
+                font=("Arial", self._sf(15)), fill="#546E7A",
+                anchor="center", justify="center", tags="f_step6"
+            ))
             self.f6_groups.append(grp)
-            for item in grp:
-                self.formula_items.append(item)
+            self.f6_cards.append({
+                "bg": bg, "formula": formula_item, "value": value_item
+            })
+            self.formula_items.extend(grp)
+        self._f6_group_dy = [0, 0, 0]
 
-        y7 = fy0
-        # columns at fixed X positions for proper alignment (using Consolas monospace)
-        col_x = [px + i*135 for i in range(5)]
-        col_hdr = ["R2","I","U1","U2","Uобщ"]
+        # --- Step 7: centred data table --------------------------------------
         self.f7_header = []
-        for i, txt in enumerate(col_hdr):
+        self.f7_row_items = []
+        self.f7_rows = []
+        table_top = 176
+        header_row_h = 44
+        row_h = 58
+        col_w = (x2 - x1) / 5.0
+        col_cx = [x1 + col_w * (i + 0.5) for i in range(5)]
+        self.f7_header.append(self._rounded_rect(
+            x1, table_top, x2, table_top + header_row_h - 4,
+            r=8, fill="#ECEFF1", outline="", tags="f_step7"
+        ))
+        for i, txt in enumerate(["R\u2082, Ом", "I, мА", "U\u2081, В", "U\u2082, В", "Uобщ, В"]):
             t = self.canvas.create_text(
-                col_x[i], y7, text=txt,
-                font=("Arial", self._sf(22), "bold"), fill="#D32F2F",
-                anchor="w", tags="f_step7"
+                col_cx[i], table_top + (header_row_h - 4) / 2 - 1,
+                text=txt, font=("Arial", self._sf(14), "bold"),
+                fill="#37474F", anchor="center", tags="f_step7"
             )
             self.f7_header.append(t)
             self.formula_items.append(t)
-        self.f7_row_items = []
-        for ri, (r2, i, u1, u2, utot) in enumerate([
+        self.formula_items.extend(self.f7_header[:1])
+
+        for ri, (r2, cur, u1, u2, utot) in enumerate([
             (200, 40, 4.0, 8.0, 12), (150, 48, 4.8, 7.2, 12),
             (100, 60, 6.0, 6.0, 12), (50,  80, 8.0, 4.0, 12),
             (25,  96, 9.6, 2.4, 12), (0,  120, 12.0, 0.0, 12),
         ]):
-            y = y7 + 70 + ri*65
-            row_vals = [str(r2), f"{i}мА", f"{u1:.1f}В", f"{u2:.1f}В", f"{utot:.0f}В"]
+            ry1 = table_top + header_row_h + ri * row_h
+            ry2 = ry1 + row_h - 4
+            row_bg = self._rounded_rect(
+                x1, ry1, x2, ry2, r=8,
+                fill="#F7F9FA" if ri % 2 == 0 else "#FFFFFF",
+                outline="", tags="f_step7"
+            )
+            cells = []
+            row_vals = [
+                str(r2), str(cur), ("%.1f" % u1).replace(".", ","),
+                ("%.1f" % u2).replace(".", ","), str(utot)
+            ]
             for ci, txt in enumerate(row_vals):
                 t = self.canvas.create_text(
-                    col_x[ci], y, text=txt,
-                    font=("Arial", self._sf(23)), fill=C_TEXT,
-                    anchor="w", tags="f_step7"
+                    col_cx[ci], (ry1 + ry2) / 2, text=txt,
+                    font=("Arial", self._sf(19)), fill=C_TEXT,
+                    anchor="center", tags="f_step7"
                 )
+                cells.append(t)
                 self.f7_row_items.append(t)
                 self.formula_items.append(t)
+            self.f7_rows.append({"bg": row_bg, "cells": cells})
+            self.f7_row_items.append(row_bg)
+            self.formula_items.append(row_bg)
 
+        fy1, fy2 = 604, 776
+        fbg = self._rounded_rect(
+            x1, fy1, x2, fy2, r=14,
+            fill="#E3F2FD", outline="#BBDEFB", width=1, tags="f_step7"
+        )
+        ft = self.canvas.create_text(
+            cx, fy1 + 34, text="Как меняются показания",
+            font=("Arial", self._sf(15), "bold"), fill="#1565C0",
+            anchor="center", tags="f_step7"
+        )
+        f1 = self.canvas.create_text(
+            cx, fy1 + 82, text="При увеличении R\u2082 ток уменьшается,",
+            font=("Arial", self._sf(17)), fill=C_TEXT,
+            anchor="center", tags="f_step7"
+        )
+        f2 = self.canvas.create_text(
+            cx, fy1 + 120, text="U\u2081 растёт, U\u2082 падает, а U\u2081 + U\u2082 = 12 В",
+            font=("Arial", self._sf(17), "bold"), fill="#37474F",
+            anchor="center", tags="f_step7"
+        )
+        fnote = self.canvas.create_text(
+            cx, 816,
+            text="Сумма напряжений всегда равна напряжению источника.",
+            font=("Arial", self._sf(13), "italic"), fill="#78909C",
+            anchor="center", tags="f_step7"
+        )
+        self.f7_footer = [fbg, ft, f1, f2, fnote]
+        self.formula_items.extend(self.f7_footer)
+
+        # --- Step 8: four key properties as a clean summary ------------------
         self.f8_items = []
-        for li, line in enumerate([
-            "Свойства последовательного", "соединения резисторов:", "",
-            "1.  U = U\u2081 + U\u2082",
-            "    (общее напряжение = сумме)", "",
-            "2.  Rэкв = R\u2081 + R\u2082",
-            "    (эквивалентное сопротивление)", "",
-            "3.  I = U / (R\u2081 + R\u2082)", "    (ток в цепи)", "",
-            "4.  R\u2082 / R\u2081 = U\u2082 / U\u2081",
-            "    (пропорциональность)",
-        ]):
-            is_numbered = line and line[0].isdigit()
-            fs = self._sf(22 if is_numbered else 18)
-            fw = "bold" if is_numbered else "normal"
-            fc = "#D32F2F" if "=" in line else C_TEXT
-            y = fy0 + li*34
-            self.f8_items.append(self.canvas.create_text(
-                px, y, text=line,
-                font=("Arial", fs, fw), fill=fc,
-                anchor="w", tags="f_step8"
-            ))
+        self.f8_cards = []
+        s_top = 168
+        s_h = 168
+        s_gap = 12
+        summary = [
+            ("U = U\u2081 + U\u2082", "Общее напряжение равно сумме\nнапряжений на участках.", "#1565C0"),
+            ("Rэкв = R\u2081 + R\u2082", "Эквивалентное сопротивление\nравно сумме сопротивлений.", "#2E7D32"),
+            ("I = U / (R\u2081 + R\u2082)", "Сила тока одинакова\nна всех участках цепи.", "#6A1B9A"),
+            ("R\u2082 / R\u2081 = U\u2082 / U\u2081", "Напряжения пропорциональны\nсопротивлениям участков.", "#E65100"),
+        ]
+        for si, (formula, desc, accent) in enumerate(summary):
+            y1 = s_top + si * (s_h + s_gap)
+            y2 = y1 + s_h
+            bg = self._rounded_rect(
+                x1, y1, x2, y2, r=14,
+                fill="#F7F9FA", outline="#DFE6EA", width=1, tags="f_step8"
+            )
+            strip = self.canvas.create_rectangle(
+                x1 + 8, y1 + 20, x1 + 13, y2 - 20,
+                fill=accent, outline="", tags="f_step8"
+            )
+            badge = self.canvas.create_oval(
+                x1 + 24, y1 + 24, x1 + 60, y1 + 60,
+                fill=accent, outline="", tags="f_step8"
+            )
+            num = self.canvas.create_text(
+                x1 + 42, y1 + 42, text=str(si + 1),
+                font=("Arial", self._sf(15), "bold"), fill="#FFFFFF",
+                anchor="center", tags="f_step8"
+            )
+            form = self.canvas.create_text(
+                cx, y1 + 62, text=formula,
+                font=("Arial", self._sf(21), "bold"), fill="#C62828",
+                anchor="center", tags="f_step8"
+            )
+            desc_item = self.canvas.create_text(
+                cx, y1 + 115, text=desc,
+                font=("Arial", self._sf(15)), fill="#546E7A",
+                anchor="center", justify="center", tags="f_step8"
+            )
+            self.f8_items.extend([bg, strip, badge, num, form, desc_item])
+            self.f8_cards.append({"bg": bg, "formula": form, "desc": desc_item})
         self.formula_items.extend(self.f8_items)
 
     def create_component_photos(self):
@@ -967,27 +1166,66 @@ class ResistorCartoon:
             self.show_photo_panel(True)
         self.show_cube(True)
 
+    def _set_panel_subtitle(self, key):
+        captions = {
+            "step5": "Показания приборов при R\u2082 = 200 Ом",
+            "step6_p1": "Свойство 1  ·  сумма напряжений",
+            "step6_p2": "Свойство 2  ·  пропорциональность",
+            "step6_p3": "Свойство 3  ·  эквивалентное сопротивление",
+            "step7": "Зависимость показаний от R\u2082",
+            "step8": "Итог  ·  четыре свойства соединения",
+        }
+        self.canvas.itemconfig(
+            self.f_subtitle,
+            text=captions.get(key, "Справочные данные по цепи"),
+        )
+
+    def _layout_f6_cards(self, count):
+        """Keep the visible property cards vertically centred in the panel."""
+        top, h, gap = 168, 225, 20
+        available = 900 - top
+        total = count * h + max(0, count - 1) * gap
+        start = top + max(0, (available - total) // 2)
+        for i in range(len(self.f6_groups)):
+            target = start + i * (h + gap)
+            base = top + i * (h + gap)
+            delta = target - base
+            shift = (delta - self._f6_group_dy[i]) * self._scale
+            if shift:
+                for item in self.f6_groups[i]:
+                    self.canvas.move(item, 0, shift)
+            self._f6_group_dy[i] = delta
+
     def show_formula(self, key):
         for item in self.formula_items:
             self.canvas.itemconfig(item, state="hidden")
         for item in self.f_panel_bg_items:
             self.canvas.itemconfig(item, state="normal")
+        self._set_panel_subtitle(key)
         if key == "step5":
             for item in self.f5_items:
                 self.canvas.itemconfig(item, state="normal")
         elif key == "step6_p1":
+            self._layout_f6_cards(1)
             for item in self.f6_groups[0]:
                 self.canvas.itemconfig(item, state="normal")
         elif key == "step6_p2":
-            for item in self.f6_groups[1]:
-                self.canvas.itemconfig(item, state="normal")
+            # Keep property 1 on screen and add property 2 below it.
+            self._layout_f6_cards(2)
+            for gi in (0, 1):
+                for item in self.f6_groups[gi]:
+                    self.canvas.itemconfig(item, state="normal")
         elif key == "step6_p3":
-            for item in self.f6_groups[2]:
-                self.canvas.itemconfig(item, state="normal")
+            self._layout_f6_cards(3)
+            for grp in self.f6_groups:
+                for item in grp:
+                    self.canvas.itemconfig(item, state="normal")
         elif key == "step7":
             for item in self.f7_header:
                 self.canvas.itemconfig(item, state="normal")
             for item in self.f7_row_items:
+                self.canvas.itemconfig(item, state="normal")
+            for item in self.f7_footer:
                 self.canvas.itemconfig(item, state="normal")
         elif key == "step8":
             for item in self.f8_items:
@@ -1103,9 +1341,11 @@ class ResistorCartoon:
                 self.canvas.itemconfig(item, state="hidden")
             for item in self.f_panel_bg_items:
                 self.canvas.itemconfig(item, state="normal")
+            self._set_panel_subtitle(None)
 
         if key == "step6_p3":
             self.highlight_property3()
+            self._highlight_formula_data("step6_p3", 0)
 
         # Schedule the current phase's timed events.
         if key in SUB_PHASE_GROUPS:
@@ -1277,63 +1517,59 @@ class ResistorCartoon:
     def _clear_formula_highlights(self):
         for item in self.canvas.find_withtag("f_hl"):
             self.canvas.delete(item)
+        for card in getattr(self, "f5_cards", []):
+            self.canvas.itemconfig(
+                card["bg"], fill="#F7F9FA", outline="#DFE6EA", width=1
+            )
+        for card in getattr(self, "f6_cards", []):
+            self.canvas.itemconfig(
+                card["bg"], fill="#F7F9FA", outline="#DFE6EA", width=1
+            )
+        for ri, row in enumerate(getattr(self, "f7_rows", [])):
+            self.canvas.itemconfig(
+                row["bg"], fill="#F7F9FA" if ri % 2 == 0 else "#FFFFFF"
+            )
+            for cell in row["cells"]:
+                self.canvas.itemconfig(
+                    cell, fill=C_TEXT,
+                    font=("Arial", self._sf(19), "normal")
+                )
 
     def _highlight_formula_data(self, phase_key, sub_idx):
-        self._clear_formula_highlights()
-        s = self._scale
         if phase_key == "step5":
-            # f5_items: [header(0), R1(1), R2(2), I(3), U1(4), U2(5), Uобщ(6)]
-            row_map = {0: 2, 1: 3, 2: 4, 3: 5, 4: 6}
-            if sub_idx in row_map:
-                ri = row_map[sub_idx]
-                if ri < len(self.f5_items):
-                    bbox = self.canvas.bbox(self.f5_items[ri])
-                    if bbox:
-                        x1, y1, x2, y2 = bbox
-                        pad = round(4 * s)
-                        self.canvas.create_rectangle(
-                            x1 - pad, y1 - pad, x2 + pad, y2 + pad,
-                            fill="#FFF9C4", outline="", tags="f_hl"
-                        )
-                        self.canvas.tag_lower("f_hl")
-        elif phase_key in ("step6_p1", "step6_p2", "step6_p3"):
-            # Highlight the formula & value lines (indices 0,1) of the current group
-            grp_idx = {"step6_p1": 0, "step6_p2": 1, "step6_p3": 2}.get(phase_key, 0)
-            if grp_idx < len(self.f6_groups):
-                for li in (0, 1):
-                    if li < len(self.f6_groups[grp_idx]):
-                        bbox = self.canvas.bbox(self.f6_groups[grp_idx][li])
-                        if bbox:
-                            x1, y1, x2, y2 = bbox
-                            pad = round(4 * s)
-                            self.canvas.create_rectangle(
-                                x1 - pad, y1 - pad, x2 + pad, y2 + pad,
-                                fill="#E3F2FD", outline="", tags="f_hl"
-                            )
-                            self.canvas.tag_lower("f_hl")
+            self._clear_formula_highlights()
+            # Data cards: R1, R2, I, U1, U2, Uобщ.  The narration highlights
+            # R2, I, U1, U2 and Uобщ in that order.
+            row_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5}
+            ri = row_map.get(sub_idx)
+            if ri is not None and ri < len(self.f5_cards):
+                self.canvas.itemconfig(
+                    self.f5_cards[ri]["bg"],
+                    fill="#FFF8E1", outline="#FFB300", width=2
+                )
+        elif phase_key in ("step6", "step6_p1", "step6_p2", "step6_p3"):
+            self._clear_formula_highlights()
+            if phase_key == "step6":
+                grp_idx = sub_idx
+            else:
+                grp_idx = {"step6_p1": 0, "step6_p2": 1, "step6_p3": 2}.get(phase_key, 0)
+            if grp_idx < len(self.f6_cards):
+                self.canvas.itemconfig(
+                    self.f6_cards[grp_idx]["bg"],
+                    fill="#EAF3FB", outline="#1565C0", width=2
+                )
 
     def highlight_r2_table_row(self, row_idx):
-        cols = 5
-        for i, item in enumerate(self.f7_row_items):
-            ri = i // cols
-            fc = "#D32F2F" if ri == row_idx else C_TEXT
-            fw = "bold" if ri == row_idx else "normal"
-            self.canvas.itemconfig(item, fill=fc, font=("Arial", self._sf(23), fw))
-        # Also add a background highlight bar to the right of the table
         self._clear_formula_highlights()
-        s = self._scale
-        for i, item in enumerate(self.f7_row_items):
-            ri = i // cols
-            if ri == row_idx:
-                bbox = self.canvas.bbox(item)
-                if bbox:
-                    x1, y1, x2, y2 = bbox
-                    pad = round(5 * s)
-                    self.canvas.create_rectangle(
-                        x1 - pad, y1 - pad, x2 + pad, y2 + pad,
-                        fill="#E8F5E9", outline="", tags="f_hl"
-                    )
-                    self.canvas.tag_lower("f_hl")
+        if not (0 <= row_idx < len(self.f7_rows)):
+            return
+        row = self.f7_rows[row_idx]
+        self.canvas.itemconfig(row["bg"], fill="#E8F5E9")
+        for cell in row["cells"]:
+            self.canvas.itemconfig(
+                cell, fill="#1B5E20",
+                font=("Arial", self._sf(19), "bold")
+            )
 
     def update_progress(self, idx):
         total = len(self.PHASES)
