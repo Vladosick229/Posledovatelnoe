@@ -108,6 +108,13 @@ PV1_CENTER   = (750+DX, 500+DY)
 PV2_CENTER   = (1050+DX, 588+DY)
 PV3_CENTER   = (900+DX, 713+DY)
 
+METER_INFO = {
+    "pa1": (PA1_CENTER, "A"),
+    "pv1": (PV1_CENTER, "V"),
+    "pv2": (PV2_CENTER, "V"),
+    "pv3": (PV3_CENTER, "V"),
+}
+
 METER_W        = 92
 METER_H        = 76
 METER_PIVOT_DY = 26
@@ -150,6 +157,9 @@ PHASE_AUDIO = {
     "step6_p3":  ("07_equivalent.wav",    0, 24974),
     "step7":     ("08_r2_change.wav",     0, 16694),
 }
+
+# Short closing line played when the lesson finishes.
+FINAL_AUDIO = "09_end.wav"
 
 # The last phase keeps running after its track ends: the R2 values are shown
 # one after another and the summary panel appears at the end.
@@ -229,11 +239,11 @@ SUB_PHASE_GROUPS = {
         {"t_ms": 3600, "tags": ["e1", "e1_wire", "battery_photo"]},
     ],
     "step5": [
-        {"t_ms": 5300,  "tags": []},            # R2 = 200 Ом
-        {"t_ms": 9900,  "tags": ["pa1_val"]},   # 40 мА
-        {"t_ms": 14800, "tags": ["pv1_val"]},   # 4 В
-        {"t_ms": 19300, "tags": ["pv2_val"]},   # 8 В
-        {"t_ms": 21700, "tags": ["pv3_val"]},   # 12 В
+        {"t_ms": 5300,  "tags": [], "action": "r2_fixed"},          # R2 = 200 Ом
+        {"t_ms": 9900,  "tags": ["pa1_val"], "action": "reading_pa1"},   # 40 мА
+        {"t_ms": 14800, "tags": ["pv1_val"], "action": "reading_pv1"},   # 4 В
+        {"t_ms": 19300, "tags": ["pv2_val"], "action": "reading_pv2"},   # 8 В
+        {"t_ms": 21700, "tags": ["pv3_val"], "action": "reading_pv3"},   # 12 В
     ],
     "step6": [
         {"t_ms": 7320,  "action": "property1", "text": PROPERTY1_TEXT},
@@ -296,6 +306,7 @@ class ResistorCartoon:
         self.pv1_needle = None
         self.pv2_needle = None
         self.pv3_needle = None
+        self._current_r2 = 200
 
         # Video playback state
         self._video_cap = None
@@ -1071,6 +1082,8 @@ class ResistorCartoon:
             self.root.after_cancel(tid)
         self._sub_phase_timers.clear()
         self._sub_phase_remaining.clear()
+        # Приборы всегда появляются со стрелками на нуле.
+        self.reset_readings()
 
     def show_photo_panel(self, visible=True):
         state = "normal" if visible else "hidden"
@@ -1116,6 +1129,13 @@ class ResistorCartoon:
             self.update_readings(r2)
             self.highlight_r2_table_row({150: 1, 100: 2, 50: 3, 25: 4, 0: 5}.get(r2, 0))
             self.highlight_junction_points(True)
+        elif action == "r2_fixed":
+            if hasattr(self, "r2_label"):
+                self.canvas.itemconfig(self.r2_label, text="R2 = 200 \u03a9")
+        elif action and action.startswith("reading_"):
+            meter = action[len("reading_"):]
+            if meter in METER_INFO:
+                self.update_readings(self._current_r2, meters=[meter])
         elif action == "summary":
             self._clear_formula_highlights()
             self.show_formula("step8")
@@ -1236,34 +1256,53 @@ class ResistorCartoon:
         i = 12.0 / r_total if r_total > 0 else 12.0 / 100.0
         return i, i*100.0, i*r2
 
-    def update_readings(self, r2):
+    def _set_needle(self, needle, center, kind, value):
+        """Move one meter needle; value is in the meter's own units."""
+        if needle is None:
+            return
         import math
+        a = math.radians(_meter_angle(kind, value))
+        ca, sa = math.cos(a), math.sin(a)
+        px = center[0]
+        py = center[1] + METER_PIVOT_DY
+        s = self._scale
+        self.canvas.coords(
+            needle,
+            (px - METER_NEEDLE_TAIL * ca) * s, (py - METER_NEEDLE_TAIL * sa) * s,
+            (px + METER_NEEDLE_LEN * ca) * s, (py + METER_NEEDLE_LEN * sa) * s,
+        )
+
+    def reset_readings(self):
+        """Return every display to 0.0 and every needle to the zero mark."""
+        self._current_r2 = 200
+        for key in ("pa1", "pv1", "pv2", "pv3"):
+            val_attr = key + "_val"
+            if hasattr(self, val_attr):
+                self.canvas.itemconfig(getattr(self, val_attr), text="0.0")
+            center, kind = METER_INFO[key]
+            self._set_needle(getattr(self, key + "_needle", None), center, kind, 0.0)
+
+    def update_readings(self, r2, meters=None):
+        """Update all meters, or only the meters named in *meters*."""
+        self._current_r2 = r2
         i, u1, u2 = self.calc_values(r2)
         i_ma = i * 1000
-        self.canvas.itemconfig(self.pa1_val, text="%d мА" % int(round(i_ma)))
-        self.canvas.itemconfig(self.pv1_val, text="%.1f В" % u1)
-        self.canvas.itemconfig(self.pv2_val, text="%.1f В" % u2)
-        self.canvas.itemconfig(self.pv3_val, text="%.1f В" % (u1+u2))
         if hasattr(self, "r2_label"):
             self.canvas.itemconfig(self.r2_label, text="R2 = %d \u03a9" % r2)
-        for needle, center, kind, v in [
-            (getattr(self, 'pa1_needle', None), PA1_CENTER, "A", i_ma),
-            (getattr(self, 'pv1_needle', None), PV1_CENTER, "V", u1),
-            (getattr(self, 'pv2_needle', None), PV2_CENTER, "V", u2),
-            (getattr(self, 'pv3_needle', None), PV3_CENTER, "V", u1+u2),
-        ]:
-            if needle is None:
+        readings = {
+            "pa1": ("%d мА" % int(round(i_ma)), i_ma),
+            "pv1": ("%.1f В" % u1, u1),
+            "pv2": ("%.1f В" % u2, u2),
+            "pv3": ("%.1f В" % (u1+u2), u1+u2),
+        }
+        for key, (text, value) in readings.items():
+            if meters is not None and key not in meters:
                 continue
-            a = math.radians(_meter_angle(kind, v))
-            ca, sa = math.cos(a), math.sin(a)
-            px = center[0]
-            py = center[1] + METER_PIVOT_DY
-            s = self._scale
-            self.canvas.coords(
-                needle,
-                (px - METER_NEEDLE_TAIL * ca) * s, (py - METER_NEEDLE_TAIL * sa) * s,
-                (px + METER_NEEDLE_LEN * ca) * s, (py + METER_NEEDLE_LEN * sa) * s,
-            )
+            val_attr = key + "_val"
+            if hasattr(self, val_attr):
+                self.canvas.itemconfig(getattr(self, val_attr), text=text)
+            center, kind = METER_INFO[key]
+            self._set_needle(getattr(self, key + "_needle", None), center, kind, value)
 
     PHASES = [
         ("step1",       "Шаг 1 из 8","Появление резисторов R1 = 100 Ом и R2 = 0\u2026200 Ом"),
@@ -1325,8 +1364,11 @@ class ResistorCartoon:
             elif pk in self.phase_items:
                 self.active_phases.add(pk)
 
-        # Phase-specific readings are prepared before the timed events fire.
+        # В шаге 5 приборы ещё показывают ноль: каждое показание появляется
+        # вместе со своей надписью. В следующих шагах значения уже установлены.
         if key == "step5":
+            self.reset_readings()
+        elif idx > 4:
             self.update_readings(200)
 
         # Clear annotations left over from the previous phase.
@@ -1752,6 +1794,7 @@ class ResistorCartoon:
 
     def show_final(self):
         self.narrator.stop()
+        self.narrator.play(os.path.join(VOICEOVER_DIR, FINAL_AUDIO))
         self.status_label.config(
             text="Видеоурок завершён! Нажмите «СБРОС» для повтора."
         )
