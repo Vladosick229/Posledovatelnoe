@@ -42,7 +42,15 @@ class AudioPlayer:
         if error:
             return False
         self._cmd("set %s time format milliseconds" % self._ALIAS)
-        error, _ = self._cmd("play %s from %d" % (self._ALIAS, max(0, int(start_ms))))
+        # Явно задаём конец файла: без этого MCI на некоторых системах
+        # останавливает воспроизведение раньше последнего звука.
+        _, length = self._cmd("status %s length" % self._ALIAS)
+        start = max(0, int(start_ms))
+        if length.isdigit() and int(length) > start:
+            play_cmd = "play %s from %d to %d" % (self._ALIAS, start, int(length))
+        else:
+            play_cmd = "play %s from %d" % (self._ALIAS, start)
+        error, _ = self._cmd(play_cmd)
         if error:
             self._cmd("close %s" % self._ALIAS)
             return False
